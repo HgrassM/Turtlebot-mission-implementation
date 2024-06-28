@@ -6,6 +6,7 @@
 #include "behaviortree_cpp_v3/behavior_tree.h"
 #include "behaviortree_cpp_v3/action_node.h"
 #include "behaviortree_cpp_v3/bt_factory.h"
+#include "geometry_msgs/msg/Twist.hpp"
 #include "geometry_msgs/msg/Pose.hpp"
 #include "geometry_msgs/msg/Point.hpp"
 #include "geometry_msgs/msg/Quaternion.hpp"
@@ -16,6 +17,7 @@ std::mutex global_mutex;
 double targetX = 0.0;
 double targetY = 0.0;
 double target_angular = 0.0;
+geometry_msg::msg::Twist velocity;
 geometry_msg::msg::Point current_position = NULL;
 geometry_msg::msg::Quaternion quaternion_data = NULL;
 sensor_msgs::msg::BatteryState batteryState = NULL;
@@ -42,6 +44,8 @@ namespace BT {
 	}
 }
 
+//This function asks the user to confirm that the food is on the robot
+
 BT::NodeStatus IsFoodOnRobot() {
 	std::string number = "0";
 
@@ -55,6 +59,8 @@ BT::NodeStatus IsFoodOnRobot() {
 	return BT::NodeStatus::SUCCESS;
 }
 
+//This function checks if the robot's battery has more than 10% of power
+
 BT::NodeStatus BatteryStatus() {
 	global_mutex.lock();
 	float percentage = batteryState.percentage;
@@ -66,6 +72,8 @@ BT::NodeStatus BatteryStatus() {
 
 	return BT::NodeStatus::SUCCESS;
 }
+
+//This node is resposible for getting user input about the delivery
 
 class RegisterDeliveryInfo : public BT::SyncActionNode {
 	public:
@@ -98,6 +106,8 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 		}
 };
 
+//This node is resposible for getting the room location data and storing it in global variables
+
 class GetRoomInfo : public BT::SyncActionNode {
 	public:
 		GetRoomInfo(const std::string& name, const BT::NodeConfiguration config)
@@ -120,7 +130,9 @@ class GetRoomInfo : public BT::SyncActionNode {
 		}
 };
 
-class GoToPatientRoom : public BT::SyncActionNode {
+//This node is responsible for the movement of the robot using a PID controller
+
+class GoToPatientRoom : public BT::StatefulActionNode {
 	private:
 		double current_linear_error_ = 0.0;
 		double current_angular_error_ = 0.0;
@@ -158,9 +170,30 @@ class GoToPatientRoom : public BT::SyncActionNode {
 	
 	public:
 		GoToPatientRoom(const std::string& name)
-			: BT::SyncActionNode(name, {}) {}
+			: BT::StatefulActionNode(name, {}) {}
 		
-		BT::NodeStatus tick() override {
-			//TODO terminar de implementar o PID	
+		BT::NodeStatus onStart() override {
+			std::cout << "Initializing delivery process..." << std::endl;
+
+			return BT::NodeStatus::RUNNING;
+		}
+
+		BT::NodeStatus onRunning() override {
+			this -> calculate_error();
+			
+			if (this -> current_angular_error_ > 0.3) {
+				velocity.angular.z = this -> calculate_angular_velocity();
+				velocity.linear.x = 0.0;
+			}else if (this -> current_linear_error_ > 0.1) {
+				velocity.angular.z = 0.0;
+				velocity.linear.x = this -> calculate_linear_velocity();
+			}else{
+				velocity.linear.x = 0.0;
+				velocity.linear.z = 0.0;
+				
+				return BT::NodeStatus::SUCCESS;
+			}
+
+			return BT::NodeStatus::RUNNING;
 		}
 };
