@@ -5,21 +5,17 @@
     <Fallback>
       <ForceFailure>
         <Sequence>
-          <RegisterDeliveryInfo delivery_info_output="{DeliveryInfo}"/>
+          <RegisterDeliveryInfo delivery_info_output="{delivery_Info}"/>
           <IsFoodOnRobot/>
-          <Repeat num_cycles="{DeliveryInfo}">
-            <Sequence>
-              <GetRoomInfo delivery_info_input="{DeliveryInfo}"/>
-              <ReactiveSequence>
-                <BatteryStatus/>
-                <GoToPatientRoom/>
-              </ReactiveSequence>
-              <DisplayFoodInfo info_for_display="{DeliveryInfo}"/>
-              <IsFoodTaken/>
-              <UpdateDeliveryInfo get_info="{DeliveryInfo}"
-                                  update_info="{DeliveryInfo}"/>
-            </Sequence>
-          </Repeat>
+          <ReactiveSequence>
+            <ReactiveSequence>
+              <BatteryStatus/>
+              <GoToPatientRoom/>
+            </ReactiveSequence>
+            <DisplayFoodInfo info_for_display="{delivery_info}"/>
+            <IsFoodTaken/>
+            <UpdateDeliveryInfo update_info="{delivery_info}"/>
+          </ReactiveSequence>
         </Sequence>
       </ForceFailure>
       <Fallback>
@@ -40,10 +36,6 @@
             editable="true">
       <input_port name="info_for_display"/>
     </Action>
-    <Action ID="GetRoomInfo"
-            editable="true">
-      <input_port name="delivery_info_input"/>
-    </Action>
     <Action ID="GoBackToKitchen"
             editable="true"/>
     <Action ID="GoToPatientRoom"
@@ -60,7 +52,6 @@
     </Action>
     <Action ID="UpdateDeliveryInfo"
             editable="true">
-      <input_port name="get_info"/>
       <output_port name="update_info"/>
     </Action>
   </TreeNodesModel>
