@@ -6,6 +6,66 @@
 
 using namespace std::chrono_literals;
 
+static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="3"
+      main_tree_to_execute="FoodDelivery">
+  <BehaviorTree ID="FoodDelivery">
+    <Fallback>
+      <ForceFailure>
+        <Sequence>
+          <RegisterDeliveryInfo delivery_info_output="{delivery_Info}"/>
+          <IsFoodOnRobot/>
+          <ReactiveSequence>
+            <ReactiveSequence>
+              <BatteryStatus/>
+              <GoToPatientRoom/>
+            </ReactiveSequence>
+            <DisplayFoodInfo info_for_display="{delivery_info}"/>
+            <IsFoodTaken/>
+            <UpdateDeliveryInfo update_info="{delivery_info}"/>
+          </ReactiveSequence>
+        </Sequence>
+      </ForceFailure>
+      <Fallback>
+        <IsRobotOnKitchen/>
+        <ReactiveSequence>
+          <BatteryStatus/>
+          <GoBackToKitchen/>
+        </ReactiveSequence>
+      </Fallback>
+    </Fallback>
+  </BehaviorTree>
+
+  <!-- Description of Node Models (used by Groot) -->
+  <TreeNodesModel>
+    <Condition ID="BatteryStatus"
+               editable="true"/>
+    <Action ID="DisplayFoodInfo"
+            editable="true">
+      <input_port name="info_for_display"/>
+    </Action>
+    <Action ID="GoBackToKitchen"
+            editable="true"/>
+    <Action ID="GoToPatientRoom"
+            editable="true"/>
+    <Condition ID="IsFoodOnRobot"
+               editable="true"/>
+    <Condition ID="IsFoodTaken"
+               editable="true"/>
+    <Condition ID="IsRobotOnKitchen"
+               editable="true"/>
+    <Action ID="RegisterDeliveryInfo"
+            editable="true">
+      <output_port name="delivery_info_output"/>
+    </Action>
+    <Action ID="UpdateDeliveryInfo"
+            editable="true">
+      <output_port name="update_info"/>
+    </Action>
+  </TreeNodesModel>
+
+</root>)";
+
 class ExecutionNode : public rclcpp::Node {
 	private:
 		rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber_;
@@ -39,7 +99,7 @@ class ExecutionNode : public rclcpp::Node {
 					"odom", 10, std::bind(&ExecutionNode::odom_callback, this, std::placeholders::_1));
 			battery_subscriber_ = rclcpp::Node::create_subscription<sensor_msgs::msg::BatteryState>(
 					"battery_state", 10, std::bind(&ExecutionNode::battery_callback, this, std::placeholders::_1));
-			twist_publisher_ = rclcpp::Node::create_publisher<geometry_msgs::msg::Twist>("vel", 10);
+			twist_publisher_ = rclcpp::Node::create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
 			timer_ = rclcpp::Node::create_wall_timer(500ms, std::bind(&ExecutionNode::twist_callback, this));
 
 			BT::BehaviorTreeFactory factory;
@@ -55,7 +115,7 @@ class ExecutionNode : public rclcpp::Node {
 			factory.registerSimpleCondition("IsFoodTaken", std::bind(IsFoodTaken));
 			factory.registerSimpleCondition("IsRobotOnKitchen", std::bind(IsRobotOnKitchen));
 
-			auto behavior_tree = factory.createTreeFromFile("./bt_folder/deliveryTree.xml");
+			auto behavior_tree = factory.createTreeFromText(xml_tree);
 
 			behavior_tree.tickRootWhileRunning();
 		}
