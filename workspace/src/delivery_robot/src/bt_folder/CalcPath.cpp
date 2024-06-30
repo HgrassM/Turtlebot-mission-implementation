@@ -14,6 +14,14 @@
 
 using namespace std;
 
+// Obs é preciso configurar a locallização do mapa. 
+// Por padrão, o programa vai tentar ler o arquivo my_map.pgm,
+// mapa completo do warehouse, que deve estar nesse diretório.
+// Caso utilize outro mapa, modifique os parametros nos dados do mapa (nome, escala e Offset's)
+// Falta tambem coletar as posições do robo e do local de destino, por enquanto está apenas para colocar manualmente
+
+
+
 class CalculatePath : public BT::StatefulActionNode {
 	private:
 		struct Point {
@@ -23,10 +31,10 @@ class CalculatePath : public BT::StatefulActionNode {
 
 			Point(int x, int y) : x(x), y(y), f(0), g(0), h(0), parent(nullptr) {}
 
-			// Função de cálculo da distância heurística (heurística de Manhattan ou euclidiana)
+			// Função de cálculo da distância heurística (Distancia Manhattan ou Euclidiana)
 			double calcularHeuristica(Point* goal) {
-				// h = sqrt(pow((x - goal->x), 2) + pow((y - goal->y), 2));	
-				h = x - goal->x + y - goal->y;
+				// h = sqrt(pow((x - goal->x), 2) + pow((y - goal->y), 2));	// Euclidiana
+				h = x - goal->x + y - goal->y;					// Manhattan
 				return h;
 			}
 		};
@@ -45,6 +53,8 @@ class CalculatePath : public BT::StatefulActionNode {
 		float escala = 0.03;
 		float OffsetX = -15.1;
 		float OffsetY = -25.0;
+
+
 
 		Point* inicio;
 		Point* objetivo;
