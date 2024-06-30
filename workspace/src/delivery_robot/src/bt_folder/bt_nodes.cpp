@@ -7,21 +7,20 @@
 #include "behaviortree_cpp_v3/behavior_tree.h"
 #include "behaviortree_cpp_v3/action_node.h"
 #include "behaviortree_cpp_v3/bt_factory.h"
-#include "geometry_msgs/msg/Twist.hpp"
-#include "geometry_msgs/msg/Pose.hpp"
-#include "geometry_msgs/msg/Point.hpp"
-#include "geometry_msgs/msg/Quaternion.hpp"
-#include "nav_msgs/msg/Odometry.hpp"
-#include "sensor_msgs/msg/BatteryState.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/pose.hpp"
+#include "geometry_msgs/msg/point.hpp"
+#include "geometry_msgs/msg/quaternion.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
 
-std::mutex global_mutex;
+std::mutex battery_mutex;
+std::mutex position_mutex;
+std::mutex twist_mutex;
 
-geometry_msg::msg::Twist velocity;
-geometry_msg::msg::Point current_position = NULL;
-geometry_msg::msg::Quaternion quaternion_data = NULL;
-sensor_msgs::msg::BatteryState batteryState = NULL;
-
-std::queue<DeliveryInfo> deliveries_list;
+geometry_msgs::msg::Twist velocity;
+geometry_msgs::msg::Point current_position;
+geometry_msgs::msg::Quaternion quaternion_data;
+float batteryState = 0.0;
 
 struct DeliveryInfo {
 	std::string food_id;
@@ -29,15 +28,17 @@ struct DeliveryInfo {
 	double y;
 };
 
+std::queue<DeliveryInfo> deliveries_list;
+
 namespace BT {
-	template <> inline DeliveryInfo convertFromString(StringView) {
+	template <> inline DeliveryInfo convertFromString(StringView str){
 		auto parts = BT::splitString(str, ';');
 
 		if (parts.size() != 3) {
-			throw BT::RunTimeError("Invalid input!");
+			throw BT::RuntimeError("Invalid input!");
 		}else{
 			DeliveryInfo output;
-			output.food_id = convertFromString<std::String>(parts[0]);
+			output.food_id = convertFromString<std::string>(parts[0]);
 			output.x = convertFromString<double>(parts[1]);
 			output.y = convertFromString<double>(parts[2]);
 			return output;
@@ -54,7 +55,7 @@ BT::NodeStatus IsFoodOnRobot() {
 	
 	while (std::stoi(number) < 1) {
 		std::cin >> number;
-		std::cout << endl;
+		std::cout << std::endl;
 	}
 
 	return BT::NodeStatus::SUCCESS;
@@ -63,13 +64,12 @@ BT::NodeStatus IsFoodOnRobot() {
 //This function checks if the robot's battery has more than 10% of power
 
 BT::NodeStatus BatteryStatus() {
-	global_mutex.lock();
-	float percentage = batteryState.percentage;
-	global_mutex.unlock();
-
-	if (percentage <= 0.10) {
+	battery_mutex.lock();
+	if (batteryState <= 0.10) {
+		battery_mutex.unlock();
 		return BT::NodeStatus::FAILURE;
 	}
+	battery_mutex.unlock();
 
 	return BT::NodeStatus::SUCCESS;
 }
@@ -83,7 +83,7 @@ BT::NodeStatus IsFoodTaken() {
 	
 	while (std::stoi(number) < 1) {
 		std::cin >> number;
-		std::cout << endl;
+		std::cout << std::endl;
 	}
 
 	return BT::NodeStatus::SUCCESS;
@@ -112,17 +112,17 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 
 		BT::NodeStatus tick() override {
 			std::string food_id = "";
-			std::string x = 0.0;
-			std::string y = 0.0;
+			std::string x = "0.0";
+			std::string y = "0.0";
 			std::string deliveries_num = "0";
 			
-			std::cout << "Type the number of food items that you want to deliver: " << endl;
+			std::cout << "Type the number of food items that you want to deliver: " << std::endl;
 
 			while (std::stoi(deliveries_num) <= 0) {
 				std::cin >> deliveries_num;
 			}
 
-			for (int i = 0; i<deliveries_num; i++) {
+			for (int i = 0; i<std::stoi(deliveries_num); i++) {
 				std::cout << "Type the food identification of your desire: ";
 				std::cin >> food_id;
 
@@ -137,7 +137,7 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 				deliveries_list.push(info);
 			}
 			
-			BT::setOutput<DeliveryInfo>("delivery_info_output", deliveries_list.front());
+			setOutput<DeliveryInfo>("delivery_info_output", deliveries_list.front());
 
 			return BT::NodeStatus::SUCCESS;
 		}
@@ -157,15 +157,15 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		const double KI_ = 0.1;
 
 		void calculate_error() {
-			double linear_error = sqrt(((this -> targetX - current_position.x)**2) + (this -> targetY - current_position.y)**2);
+			position_mutex.lock();
+			double linear_error = sqrt((pow((this -> targetX - current_position.x), 2.0)) + pow((this -> targetY - current_position.y), 2.0));
 			
 			double target_angle = atan2(this -> targetY - current_position.y, this -> targetX - current_position.x);
 			
-			global_mutex.lock();
 			double current_angle = atan2(2.0*(quaternion_data.y*quaternion_data.x + 
-					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(quaternion_data.z**2 +
-					quaternion_data.y**2));
-			global_mutex.unlock();
+					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(pow(quaternion_data.z, 2.0) +
+					pow(quaternion_data.y, 2.0)));
+			position_mutex.unlock();
 
 			double angular_error = target_angle - current_angle;
 			
@@ -187,15 +187,15 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		GoToPatientRoom(const std::string& name, const BT::NodeConfiguration& config)
 			: BT::StatefulActionNode(name, config) {}
 		
-		BT::PortsList providedPorts() {
-			return {BT::InputPort<DeliveryInfo>("target_info")}
+		static BT::PortsList providedPorts() {
+			return {BT::InputPort<DeliveryInfo>("target_info")};
 		}
 
 		BT::NodeStatus onStart() override {
-			auto res = BT::getInput<DeliveryInfo>("target_info");
+			auto res = getInput<DeliveryInfo>("target_info");
 			
 			if (!res) {
-				throw RuntimeError("Error reading inputPort: ", res.error());
+				throw BT::RuntimeError("Error reading inputPort: ", res.error());
 			}
 			
 			DeliveryInfo data = res.value();
@@ -211,38 +211,48 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 			this -> calculate_error();
 			
 			if (this -> current_angular_error_ > 0.3) {
+				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
+				twist_mutex.unlock();
 			}else if (this -> current_linear_error_ > 0.1) {
+				twist_mutex.lock();
 				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
+				twist_mutex.unlock();
 			}else{
+				twist_mutex.lock();
 				velocity.linear.x = 0.0;
 				velocity.linear.z = 0.0;
+				twist_mutex.unlock();
 				
 				return BT::NodeStatus::SUCCESS;
 			}
 
 			return BT::NodeStatus::RUNNING;
 		}
+
+		void onHalted() override {
+			std::cout << "The battery percentage has reached 10% or less. The delivery has been interrupted!" << std::endl; 
+		}
 };
 
 //This node is responsible for displaying information about the delivery
 
-class DisplayFoodInfo : BT::SyncActionNode {
+class DisplayFoodInfo : public BT::SyncActionNode {
 	public:
 		DisplayFoodInfo(const std::string& name, const BT::NodeConfiguration& config) 
 			: BT::SyncActionNode(name, config) {}
 
-		BT::PortsList providedPorts() {
+		static BT::PortsList providedPorts() {
 			return {BT::InputPort<DeliveryInfo>("info_for_display")};
 		}
 
 		BT::NodeStatus tick() override {
-			auto res = BT::getInput<DeliveryInfo>("info_for_display");
+			auto res = getInput<DeliveryInfo>("info_for_display");
 
 			if (!res) {
-				throw RuntimeError("Error reading inputPort: ", res.error());
+				throw BT::RuntimeError("Error reading inputPort: ", res.error());
 			}
 
 			DeliveryInfo data = res.value();
@@ -254,22 +264,22 @@ class DisplayFoodInfo : BT::SyncActionNode {
 
 //This node updates data to set the robot for the next delivery, if there is any
 
-class UpdateDeliveryInfo : BT::SyncActionNode {
+class UpdateDeliveryInfo : public BT::SyncActionNode {
 	public:
-		UpdateDeliveryInfo(const std::string& name, BT::NodeConfiguration& config)
+		UpdateDeliveryInfo(const std::string& name, const BT::NodeConfiguration& config)
 			: BT::SyncActionNode(name, config) {}
 		
-		BT::PortsList providedPorts() {
+		static BT::PortsList providedPorts() {
 			return {BT::OutputPort<DeliveryInfo>("update_info")};
 		}
 
 		BT::NodeStatus tick() override {
 			if (deliveries_list.empty()) {
-				return BT::NodeStatus::SUCESS;
+				return BT::NodeStatus::SUCCESS;
 			}
 
 			deliveries_list.pop();
-			BT::setOutput<DeliveryInfo>("update_info", deliveries_list.front());
+			setOutput<DeliveryInfo>("update_info", deliveries_list.front());
 			
 			return BT::NodeStatus::FAILURE;
 		}
@@ -277,7 +287,7 @@ class UpdateDeliveryInfo : BT::SyncActionNode {
 
 //This node is responsible for making the robot go back to the kitchen
 
-class GoBackToKitchen : BT::StatefulActionNode {
+class GoBackToKitchen : public BT::StatefulActionNode {
 	private:
 		double targetX = 0.0;
 		double targetY = 0.0;
@@ -289,15 +299,15 @@ class GoBackToKitchen : BT::StatefulActionNode {
 		const double KI_ = 0.1;
 
 		void calculate_error() {
-			double linear_error = sqrt(((this -> targetX - current_position.x)**2) + (this -> targetY - current_position.y)**2);
+			position_mutex.lock();
+			double linear_error = sqrt((pow((this -> targetX - current_position.x), 2.0)) + pow((this -> targetY - current_position.y),2.0));
 			
 			double target_angle = atan2(this -> targetY - current_position.y, this -> targetX - current_position.x);
 			
-			global_mutex.lock();
 			double current_angle = atan2(2.0*(quaternion_data.y*quaternion_data.x + 
-					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(quaternion_data.z**2 +
-					quaternion_data.y**2));
-			global_mutex.unlock();
+					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(pow(quaternion_data.z, 2.0) +
+					pow(quaternion_data.y, 2.0)));
+			position_mutex.unlock();
 
 			double angular_error = target_angle - current_angle;
 			
@@ -329,19 +339,29 @@ class GoBackToKitchen : BT::StatefulActionNode {
 			this -> calculate_error();
 			
 			if (this -> current_angular_error_ > 0.3) {
+				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
+				twist_mutex.unlock();
 			}else if (this -> current_linear_error_ > 0.1) {
+				twist_mutex.lock();
 				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
+				twist_mutex.unlock();
 			}else{
+				twist_mutex.lock();
 				velocity.linear.x = 0.0;
 				velocity.linear.z = 0.0;
-				
+				twist_mutex.unlock();
+
 				return BT::NodeStatus::SUCCESS;
 			}
 
 			return BT::NodeStatus::RUNNING;
+		}
+
+		void onHalted() override {
+			std::cout << "The battery precentage reached 10% or less. The delivery has been interrupted!" << std::endl;
 		}
 
 };
