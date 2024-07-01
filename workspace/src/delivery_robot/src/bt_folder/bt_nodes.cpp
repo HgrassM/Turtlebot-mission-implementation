@@ -30,22 +30,6 @@ struct DeliveryInfo {
 
 std::queue<DeliveryInfo> deliveries_list;
 
-namespace BT {
-	template <> inline DeliveryInfo convertFromString(StringView str){
-		auto parts = BT::splitString(str, ';');
-
-		if (parts.size() != 3) {
-			throw BT::RuntimeError("Invalid input!");
-		}else{
-			DeliveryInfo output;
-			output.food_id = convertFromString<std::string>(parts[0]);
-			output.x = convertFromString<double>(parts[1]);
-			output.y = convertFromString<double>(parts[2]);
-			return output;
-		}	
-	}
-}
-
 //This function asks the user to confirm that the food is on the robot
 
 BT::NodeStatus IsFoodOnRobot() {
@@ -65,6 +49,7 @@ BT::NodeStatus IsFoodOnRobot() {
 
 BT::NodeStatus BatteryStatus() {
 	battery_mutex.lock();
+	std::cout << "Battery: " << batteryState << std::endl;
 	if (batteryState <= 0.10) {
 		battery_mutex.unlock();
 		return BT::NodeStatus::FAILURE;
@@ -103,12 +88,8 @@ BT::NodeStatus IsRobotOnKitchen() {
 
 class RegisterDeliveryInfo : public BT::SyncActionNode {
 	public:
-		RegisterDeliveryInfo(const std::string& name, const BT::NodeConfiguration& config)
-		       : BT::SyncActionNode(name, config) {}
-
-		static BT::PortsList providedPorts() {
-			return {BT::OutputPort<DeliveryInfo>("delivery_info_output")};
-		}
+		RegisterDeliveryInfo(const std::string& name)
+		       : BT::SyncActionNode(name, {}) {}
 
 		BT::NodeStatus tick() override {
 			std::string food_id = "";
@@ -134,10 +115,9 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 				std::cout << std::endl << std::endl;
 
 				DeliveryInfo info = {food_id, std::stod(x), std::stod(y)};
+
 				deliveries_list.push(info);
 			}
-			
-			setOutput<DeliveryInfo>("delivery_info_output", deliveries_list.front());
 
 			return BT::NodeStatus::SUCCESS;
 		}
@@ -184,21 +164,11 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		}
 	
 	public:
-		GoToPatientRoom(const std::string& name, const BT::NodeConfiguration& config)
-			: BT::StatefulActionNode(name, config) {}
-		
-		static BT::PortsList providedPorts() {
-			return {BT::InputPort<DeliveryInfo>("target_info")};
-		}
+		GoToPatientRoom(const std::string& name)
+			: BT::StatefulActionNode(name, {}) {}
 
 		BT::NodeStatus onStart() override {
-			auto res = getInput<DeliveryInfo>("target_info");
-			
-			if (!res) {
-				throw BT::RuntimeError("Error reading inputPort: ", res.error());
-			}
-			
-			DeliveryInfo data = res.value();
+			DeliveryInfo data = deliveries_list.front();
 			this -> targetX = data.x;
 			this -> targetY = data.y;
 
@@ -215,17 +185,22 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
 				twist_mutex.unlock();
+
+				std::cout << "Changing velocity" << std::endl;
 			}else if (this -> current_linear_error_ > 0.1) {
 				twist_mutex.lock();
 				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
 				twist_mutex.unlock();
+
+				std::cout << "Changing velocity" << std::endl;
 			}else{
 				twist_mutex.lock();
 				velocity.linear.x = 0.0;
 				velocity.linear.z = 0.0;
 				twist_mutex.unlock();
 				
+				std::cout << "Changing velocity" << std::endl;
 				return BT::NodeStatus::SUCCESS;
 			}
 
@@ -241,21 +216,11 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 
 class DisplayFoodInfo : public BT::SyncActionNode {
 	public:
-		DisplayFoodInfo(const std::string& name, const BT::NodeConfiguration& config) 
-			: BT::SyncActionNode(name, config) {}
-
-		static BT::PortsList providedPorts() {
-			return {BT::InputPort<DeliveryInfo>("info_for_display")};
-		}
+		DisplayFoodInfo(const std::string& name) 
+			: BT::SyncActionNode(name, {}) {}
 
 		BT::NodeStatus tick() override {
-			auto res = getInput<DeliveryInfo>("info_for_display");
-
-			if (!res) {
-				throw BT::RuntimeError("Error reading inputPort: ", res.error());
-			}
-
-			DeliveryInfo data = res.value();
+			DeliveryInfo data = deliveries_list.front();
 			std::cout << "The food has arrived! " << std::endl << "Take the food with this id: " << data.food_id << std::endl;
 			
 			return BT::NodeStatus::SUCCESS;
@@ -266,12 +231,8 @@ class DisplayFoodInfo : public BT::SyncActionNode {
 
 class UpdateDeliveryInfo : public BT::SyncActionNode {
 	public:
-		UpdateDeliveryInfo(const std::string& name, const BT::NodeConfiguration& config)
-			: BT::SyncActionNode(name, config) {}
-		
-		static BT::PortsList providedPorts() {
-			return {BT::OutputPort<DeliveryInfo>("update_info")};
-		}
+		UpdateDeliveryInfo(const std::string& name)
+			: BT::SyncActionNode(name, {}) {}
 
 		BT::NodeStatus tick() override {
 			if (deliveries_list.empty()) {
@@ -279,7 +240,6 @@ class UpdateDeliveryInfo : public BT::SyncActionNode {
 			}
 
 			deliveries_list.pop();
-			setOutput<DeliveryInfo>("update_info", deliveries_list.front());
 			
 			return BT::NodeStatus::FAILURE;
 		}
