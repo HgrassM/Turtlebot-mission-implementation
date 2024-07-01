@@ -1,6 +1,9 @@
 #include <chrono>
+#include <thread>
+#include <stack>
 
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp/qos.hpp"
 #include "nav_msgs/msg/odometry.hpp" 
 #include "bt_folder/bt_nodes.cpp"
 
@@ -13,16 +16,16 @@ static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
     <Fallback>
       <ForceFailure>
         <Sequence>
-          <RegisterDeliveryInfo delivery_info_output="{delivery_Info}"/>
+          <RegisterDeliveryInfo/>
           <IsFoodOnRobot/>
           <ReactiveSequence>
             <ReactiveSequence>
               <BatteryStatus/>
               <GoToPatientRoom/>
             </ReactiveSequence>
-            <DisplayFoodInfo info_for_display="{delivery_info}"/>
+            <DisplayFoodInfo/>
             <IsFoodTaken/>
-            <UpdateDeliveryInfo update_info="{delivery_info}"/>
+            <UpdateDeliveryInfo/>
           </ReactiveSequence>
         </Sequence>
       </ForceFailure>
@@ -41,9 +44,7 @@ static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
     <Condition ID="BatteryStatus"
                editable="true"/>
     <Action ID="DisplayFoodInfo"
-            editable="true">
-      <input_port name="info_for_display"/>
-    </Action>
+            editable="true"/>
     <Action ID="GoBackToKitchen"
             editable="true"/>
     <Action ID="GoToPatientRoom"
@@ -55,16 +56,20 @@ static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
     <Condition ID="IsRobotOnKitchen"
                editable="true"/>
     <Action ID="RegisterDeliveryInfo"
-            editable="true">
-      <output_port name="delivery_info_output"/>
-    </Action>
+            editable="true"/>
     <Action ID="UpdateDeliveryInfo"
-            editable="true">
-      <output_port name="update_info"/>
-    </Action>
+            editable="true"/>
   </TreeNodesModel>
 
 </root>)";
+
+BT::BehaviorTreeFactory tree_factory;
+
+void tick_tree(BT::BehaviorTreeFactory tree_factory) {
+			auto tree = tree_factory.createTreeFromText(xml_tree);
+
+			tree.tickRootWhileRunning();
+}
 
 class ExecutionNode : public rclcpp::Node {
 	private:
@@ -73,6 +78,7 @@ class ExecutionNode : public rclcpp::Node {
 		rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_;
 		rclcpp::TimerBase::SharedPtr timer_;
 		size_t count_;
+		std::stack<std::thread> thread_stack_;
 
 		void twist_callback() {
 			twist_mutex.lock();
@@ -80,27 +86,30 @@ class ExecutionNode : public rclcpp::Node {
 			twist_mutex.unlock();
 		}
 
-		void odom_callback(const nav_msgs::msg::Odometry& odom_msg) {
+		void odom_callback(const nav_msgs::msg::Odometry& odom_msg) const{
 			position_mutex.lock();
 			current_position = odom_msg.pose.pose.position;
 			quaternion_data = odom_msg.pose.pose.orientation;
 			position_mutex.unlock();
 		}
 
-		void battery_callback(const sensor_msgs::msg::BatteryState& battery_msg) {
+		void battery_callback(const sensor_msgs::msg::BatteryState& battery_msg) const{
 			battery_mutex.lock();
+			//std::cout << "Battery: " << battery_msg.percentage << std::endl;
 			batteryState = battery_msg.percentage;
 			battery_mutex.unlock();
-		}
+		}	
 
 	public:
 		ExecutionNode() : Node("execution_node"), count_(0) {
 			odom_subscriber_ = rclcpp::Node::create_subscription<nav_msgs::msg::Odometry>(
 					"odom", 10, std::bind(&ExecutionNode::odom_callback, this, std::placeholders::_1));
+			rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
+			auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
 			battery_subscriber_ = rclcpp::Node::create_subscription<sensor_msgs::msg::BatteryState>(
-					"battery_state", 10, std::bind(&ExecutionNode::battery_callback, this, std::placeholders::_1));
+					"battery_state", qos, std::bind(&ExecutionNode::battery_callback, this, std::placeholders::_1));
 			twist_publisher_ = rclcpp::Node::create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
-			timer_ = rclcpp::Node::create_wall_timer(500ms, std::bind(&ExecutionNode::twist_callback, this));
+			timer_ = this -> create_wall_timer(100ms, std::bind(&ExecutionNode::twist_callback, this));
 
 			BT::BehaviorTreeFactory factory;
 
@@ -114,10 +123,8 @@ class ExecutionNode : public rclcpp::Node {
 			factory.registerSimpleCondition("BatteryStatus", std::bind(BatteryStatus));
 			factory.registerSimpleCondition("IsFoodTaken", std::bind(IsFoodTaken));
 			factory.registerSimpleCondition("IsRobotOnKitchen", std::bind(IsRobotOnKitchen));
-
-			auto behavior_tree = factory.createTreeFromText(xml_tree);
-
-			behavior_tree.tickRootWhileRunning();
+			
+			thread_stack_.push(std::thread(tick_tree, factory));
 		}
 };
 
