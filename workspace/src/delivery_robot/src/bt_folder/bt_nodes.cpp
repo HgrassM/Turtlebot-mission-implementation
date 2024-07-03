@@ -49,7 +49,6 @@ BT::NodeStatus IsFoodOnRobot() {
 
 BT::NodeStatus BatteryStatus() {
 	battery_mutex.lock();
-	std::cout << "Battery: " << batteryState << std::endl;
 	if (batteryState <= 0.10) {
 		battery_mutex.unlock();
 		return BT::NodeStatus::FAILURE;
@@ -88,8 +87,12 @@ BT::NodeStatus IsRobotOnKitchen() {
 
 class RegisterDeliveryInfo : public BT::SyncActionNode {
 	public:
-		RegisterDeliveryInfo(const std::string& name)
-		       : BT::SyncActionNode(name, {}) {}
+		RegisterDeliveryInfo(const std::string& name, const BT::NodeConfiguration& config)
+		       : BT::SyncActionNode(name, config) {}
+		
+		static BT::PortsList providedPorts() {
+			return {BT::OutputPort<int>("given_deliveries")};
+		}
 
 		BT::NodeStatus tick() override {
 			std::string food_id = "";
@@ -119,6 +122,8 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 				deliveries_list.push(info);
 			}
 
+			setOutput("given_deliveries", std::stoi(deliveries_num));
+
 			return BT::NodeStatus::SUCCESS;
 		}
 };
@@ -133,8 +138,8 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		double current_angular_error_ = 0.0;
 		double linear_error_sum_ = 0.0;
 		double angular_error_sum_ = 0.0;
-		const double KP_ = 0.3;
-		const double KI_ = 0.1;
+		const double KP_ = 0.05;
+		const double KI_ = 0.01;
 
 		void calculate_error() {
 			position_mutex.lock();
@@ -180,27 +185,27 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		BT::NodeStatus onRunning() override {
 			this -> calculate_error();
 			
-			if (this -> current_angular_error_ > 0.3) {
+			if (abs(this -> current_angular_error_) > 0.3) {
 				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
 				twist_mutex.unlock();
-
-				std::cout << "Changing velocity" << std::endl;
-			}else if (this -> current_linear_error_ > 0.1) {
+			}else if (abs(this -> current_linear_error_) > 0.1) {
 				twist_mutex.lock();
 				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
 				twist_mutex.unlock();
-
-				std::cout << "Changing velocity" << std::endl;
 			}else{
 				twist_mutex.lock();
 				velocity.linear.x = 0.0;
 				velocity.linear.z = 0.0;
 				twist_mutex.unlock();
-				
-				std::cout << "Changing velocity" << std::endl;
+			
+				this -> current_linear_error_ = 0.0;
+				this -> current_angular_error_ = 0.0;
+				this -> linear_error_sum_ = 0.0;
+				this -> angular_error_sum_ = 0.0;
+
 				return BT::NodeStatus::SUCCESS;
 			}
 
@@ -241,7 +246,7 @@ class UpdateDeliveryInfo : public BT::SyncActionNode {
 
 			deliveries_list.pop();
 			
-			return BT::NodeStatus::FAILURE;
+			return BT::NodeStatus::SUCCESS;
 		}
 };
 
@@ -249,14 +254,14 @@ class UpdateDeliveryInfo : public BT::SyncActionNode {
 
 class GoBackToKitchen : public BT::StatefulActionNode {
 	private:
-		double targetX = 0.0;
-		double targetY = 0.0;
+		const double targetX = 0.0;
+		const double targetY = 0.0;
 		double current_linear_error_ = 0.0;
 		double current_angular_error_ = 0.0;
 		double linear_error_sum_ = 0.0;
 		double angular_error_sum_ = 0.0;
-		const double KP_ = 0.3;
-		const double KI_ = 0.1;
+		const double KP_ = 0.05;
+		const double KI_ = 0.01;
 
 		void calculate_error() {
 			position_mutex.lock();
@@ -298,12 +303,12 @@ class GoBackToKitchen : public BT::StatefulActionNode {
 		BT::NodeStatus onRunning() override {
 			this -> calculate_error();
 			
-			if (this -> current_angular_error_ > 0.3) {
+			if (abs(this -> current_angular_error_) > 0.3) {
 				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
 				twist_mutex.unlock();
-			}else if (this -> current_linear_error_ > 0.1) {
+			}else if (abs(this -> current_linear_error_) > 0.1) {
 				twist_mutex.lock();
 				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
@@ -313,6 +318,11 @@ class GoBackToKitchen : public BT::StatefulActionNode {
 				velocity.linear.x = 0.0;
 				velocity.linear.z = 0.0;
 				twist_mutex.unlock();
+
+				this -> current_linear_error_ = 0.0;
+				this -> current_angular_error_ = 0.0;
+				this -> linear_error_sum_ = 0.0;
+				this -> angular_error_sum_ = 0.0;
 
 				return BT::NodeStatus::SUCCESS;
 			}
