@@ -5,17 +5,19 @@
     <Fallback>
       <ForceFailure>
         <Sequence>
-          <RegisterDeliveryInfo/>
+          <RegisterDeliveryInfo given_deliveries="{delivery_num}"/>
           <IsFoodOnRobot/>
-          <ReactiveSequence>
+          <Repeat num_cycles="{delivery_num}">
             <ReactiveSequence>
-              <BatteryStatus/>
-              <GoToPatientRoom/>
+              <ReactiveSequence>
+                <BatteryStatus/>
+                <GoToPatientRoom/>
+              </ReactiveSequence>
+              <DisplayFoodInfo/>
+              <IsFoodTaken/>
+              <UpdateDeliveryInfo/>
             </ReactiveSequence>
-            <DisplayFoodInfo/>
-            <IsFoodTaken/>
-            <UpdateDeliveryInfo/>
-          </ReactiveSequence>
+          </Repeat>
         </Sequence>
       </ForceFailure>
       <Fallback>
@@ -45,7 +47,9 @@
     <Condition ID="IsRobotOnKitchen"
                editable="true"/>
     <Action ID="RegisterDeliveryInfo"
-            editable="true"/>
+            editable="true">
+      <output_port name="given_deliveries"/>
+    </Action>
     <Action ID="UpdateDeliveryInfo"
             editable="true"/>
   </TreeNodesModel>
