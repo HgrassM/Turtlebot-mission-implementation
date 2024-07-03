@@ -88,10 +88,17 @@ class CalculatePath : public BT::StatefulActionNode {
 				cerr << "Erro ao abrir o arquivo." << endl;
 				return matriz;
 			}
-
+			string tipo;
 			int largura, altura, maxValor;
-
-			getline(arquivo);
+			
+			// Lê o tipo do arquivo PGM (deve ser 'P5')
+			getline(arquivo, tipo);
+			if (tipo != "P5") {
+		        	cerr << "O arquivo não é um arquivo PGM no formato binário (P5)." << endl;
+		        	arquivo.close();
+		        	return matriz; // Retorna matriz vazia se não for PGM P5
+			}
+			
 			arquivo >> largura >> altura >> maxValor;
 			arquivo.get(); 
 
