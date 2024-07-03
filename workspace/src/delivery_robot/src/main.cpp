@@ -16,17 +16,19 @@ static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
     <Fallback>
       <ForceFailure>
         <Sequence>
-          <RegisterDeliveryInfo/>
+          <RegisterDeliveryInfo given_deliveries="{delivery_num}"/>
           <IsFoodOnRobot/>
-          <ReactiveSequence>
+          <Repeat num_cycles="{delivery_num}">
             <ReactiveSequence>
-              <BatteryStatus/>
-              <GoToPatientRoom/>
+              <ReactiveSequence>
+                <BatteryStatus/>
+                <GoToPatientRoom/>
+              </ReactiveSequence>
+              <DisplayFoodInfo/>
+              <IsFoodTaken/>
+              <UpdateDeliveryInfo/>
             </ReactiveSequence>
-            <DisplayFoodInfo/>
-            <IsFoodTaken/>
-            <UpdateDeliveryInfo/>
-          </ReactiveSequence>
+          </Repeat>
         </Sequence>
       </ForceFailure>
       <Fallback>
@@ -56,19 +58,21 @@ static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
     <Condition ID="IsRobotOnKitchen"
                editable="true"/>
     <Action ID="RegisterDeliveryInfo"
-            editable="true"/>
+            editable="true">
+      <output_port name="given_deliveries"/>
+    </Action>
     <Action ID="UpdateDeliveryInfo"
             editable="true"/>
   </TreeNodesModel>
 
 </root>)";
 
-BT::BehaviorTreeFactory tree_factory;
-
 void tick_tree(BT::BehaviorTreeFactory tree_factory) {
 			auto tree = tree_factory.createTreeFromText(xml_tree);
-
-			tree.tickRootWhileRunning();
+			
+			while (true) {
+				tree.tickRootWhileRunning();
+			}
 }
 
 class ExecutionNode : public rclcpp::Node {
