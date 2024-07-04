@@ -3,6 +3,10 @@
 #include <mutex>
 #include <cmath>
 #include <queue>
+#include <vector>
+#include <tuple>
+#include <fstream>
+#include <algorithm>
 
 #include "behaviortree_cpp_v3/behavior_tree.h"
 #include "behaviortree_cpp_v3/action_node.h"
@@ -17,6 +21,8 @@ std::mutex battery_mutex;
 std::mutex position_mutex;
 std::mutex twist_mutex;
 
+std::queue<std::tuple<double,double>> pointsToGo;
+
 geometry_msgs::msg::Twist velocity;
 geometry_msgs::msg::Point current_position;
 geometry_msgs::msg::Quaternion quaternion_data;
@@ -28,7 +34,43 @@ struct DeliveryInfo {
 	double y;
 };
 
+struct Point {
+    int x, y;
+    double f, g, h; 
+    Point* parent; 
+    int intensity; 
+
+    Point(int x, int y) : x(x), y(y), f(0), g(0), h(0), parent(nullptr), intensity(255) {}
+
+    double calcularHeuristica(Point* goal) {
+        // h = sqrt(pow((x - goal->x), 2) + pow((y - goal->y), 2));
+        h = x - goal->x + y - goal->y;
+        return h;
+    }
+};
+
 std::queue<DeliveryInfo> deliveries_list;
+
+std::tuple<double,double> toPos(int x, int y){
+	float escala = 0.03;
+	float OffsetX = -15.1;
+	float OffsetY = -25.0;	
+	double X, Y;
+	
+	X = OffsetX + escala*x;
+	Y = -OffsetY - escala*y;
+	std::tuple<double,double> posicao = std::make_tuple(X,Y);
+	return posicao;
+}
+
+Point toIndex(double X, double Y){ // converte a posição real para indice na matriz
+	float escala = 0.03;
+	float OffsetX = -15.1;
+	float OffsetY = -25.0;	
+	int linha = -(Y + OffsetY)/escala;
+	int coluna = (X - OffsetX)/escala;
+	return Point(coluna, linha);
+}
 
 //This function asks the user to confirm that the food is on the robot
 
@@ -82,6 +124,190 @@ BT::NodeStatus IsRobotOnKitchen() {
 
 	return BT::NodeStatus::FAILURE;
 }
+
+class CalculatePath : public BT::SyncActionNode {
+	private:
+		bool dentroDosLimites(int x, int y, int linhas, int colunas) {
+		    return (y >= 0 && y < linhas && x >= 0 && x < colunas);
+		}
+
+		bool dangerpos(std::vector<std::vector<int>>& mapa, int x, int y){
+		    int margem = 10;
+		    for (int i = -margem; i <= margem; i++){
+			for (int j = -margem; j <= margem; j++){
+			    if (!dentroDosLimites(x+i, y+j, mapa.size(), mapa[0].size())){
+				return true;
+			    }
+			    if (mapa[y+i][x+j] == 1){
+				return true;
+			    }
+			}
+		    }
+		    return false;
+		    
+		}
+
+		std::vector<Point*> encontrarCaminhoAStar(std::vector<std::vector<int>>& mapa, Point* inicio, Point* objetivo) {
+		    
+		    if (!dentroDosLimites(inicio->x, inicio->y, mapa.size(), mapa[0].size())){
+			std::cout << "Ponto inicial ffora do mapa!" << std::endl;
+			return {};
+		    }
+		    
+		    if (!dentroDosLimites(objetivo->x, objetivo->y, mapa.size(), mapa[0].size())){
+			std::cout << "Ponto Final fora do mapa!" << std::endl;
+			return {};
+		    }
+
+		    if (mapa[inicio->x][inicio->y] == 1){
+			std::cout << "Ponto inicial na parede!" << std::endl;
+			return {};
+		    }
+		    
+		    if (mapa[objetivo->x][objetivo->y] == 1){
+			std::cout << "Ponto Final na parede!" << std::endl;
+			return {};
+		    }
+
+
+		    int direcoes[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+
+
+		    auto comp = [](Point* a, Point* b) { return a->f > b->f; };
+		    std::priority_queue<Point*, std::vector<Point*>, decltype(comp)> filaPrioridade(comp);
+
+		    inicio->g = 0.0;
+		    inicio->calcularHeuristica(objetivo);
+		    inicio->f = inicio->g + inicio->h;
+		    filaPrioridade.push(inicio);
+
+		    while (!filaPrioridade.empty()) {
+			Point* atual = filaPrioridade.top();
+
+			filaPrioridade.pop();
+
+			std::vector<Point*> caminho;
+			if (atual->x == objetivo->x && atual->y == objetivo->y  ) {
+			    for (Point* p = atual; p != nullptr; p = p->parent) {
+				mapa[p->y][p->x] = 0;
+				caminho.push_back(p);
+
+			    }
+			    reverse(caminho.begin(), caminho.end());
+			    return caminho;
+			}
+
+			for (auto& dir : direcoes) {
+			    int novoX = atual->x + dir[0];
+			    int novoY = atual->y + dir[1];
+
+			    
+
+			    if (dentroDosLimites(novoX, novoY, mapa.size(), mapa[0].size()) && mapa[novoY][novoX] == 0) {
+				if (!dangerpos(mapa, novoX, novoY)){
+				    Point* vizinho = new Point(novoX, novoY);
+				    vizinho->parent = atual;
+				    vizinho->g = atual->g + 1; // Custo do movimento (assumindo custo 1 entre pontos adjacentes)
+				    vizinho->calcularHeuristica(objetivo);
+				    vizinho->f = vizinho->h + vizinho->g;
+				    filaPrioridade.push(vizinho);
+				    // Adiciona o vizinho à fila de prioridade
+				}
+
+				mapa[novoY][novoX] = -1; // Marcando como visitado
+			    }
+			}
+		    }
+
+		    return {};
+		}
+
+		std::vector<std::vector<int>> lerArquivoPGM(std::string nomeArquivo) {
+		    std::ifstream arquivo(nomeArquivo, std::ios::binary);
+		    std::vector<std::vector<int>> matriz;
+
+		    if (!arquivo.is_open()) {
+			std::cerr << "Erro ao abrir o arquivo." << std::endl;
+			return matriz; // Retorna matriz vazia se houver erro na abertura do arquivo
+		    }
+
+		    // Variáveis para armazenar informações do cabeçalho PGM
+		    std::string tipo;
+		    int largura, altura, maxValor;
+
+		    // Lê o tipo do arquivo PGM (deve ser 'P5')
+		    std::getline(arquivo, tipo);
+		    if (tipo != "P5") {
+			std::cerr << "O arquivo não é um arquivo PGM no formato binário (P5)." << std::endl;
+			arquivo.close();
+			return matriz; // Retorna matriz vazia se não for PGM P5
+		    }
+
+		    // Pula comentários (linhas que começam com '#')
+		    char c = arquivo.peek();
+		    while (c == '#') {
+			arquivo.ignore(256, '\n'); // Ignora a linha de comentário
+			c = arquivo.peek();
+		    }
+
+		    // Lê largura, altura e valor máximo de intensidade
+		    arquivo >> largura >> altura >> maxValor;
+		    arquivo.get(); // Para consumir o caractere de quebra de linha após o valor máximo
+
+		    // Lê os pixels do arquivo PGM e cria a matriz binária
+		    matriz.resize(altura, std::vector<int>(largura));
+
+		    // Lê os pixels byte a byte
+		    for (int i = 0; i < altura; ++i) {
+			for (int j = 0; j < largura; ++j) {
+			    unsigned char valorPixel;
+			    arquivo.read(reinterpret_cast<char*>(&valorPixel), 1);
+
+			    // Determina se o pixel é branco ou não (usando um limiar de 255/2 = 127.5)
+			    matriz[i][j] = (valorPixel < 250) ? 1 : 0;
+			}
+		    }
+
+		    arquivo.close();
+		    return matriz;
+		}
+
+	public:
+		CalculatePath(const std::string& name)
+			: BT::SyncActionNode(name, {}) {}
+
+		BT::NodeStatus tick() override {
+			std::cout << "Creating a path to the desired location..." << std::endl;
+
+			std::string nomeArquivo = "src/delivery_robot/src/bt_folder/my_map.pgm"; 
+
+			std::vector<std::vector<int>> mapa = lerArquivoPGM(nomeArquivo);
+
+    			int linhas = mapa.size();
+    			int colunas = mapa[0].size();
+
+    			Point* inicio = new Point(colunas/2-20, linhas/2);
+
+			DeliveryInfo data = deliveries_list.front();
+			Point objetivo = toIndex(data.x, data.y);
+    
+			std::vector<Point*> caminho = encontrarCaminhoAStar(mapa, inicio, &objetivo);
+			
+			for (auto it = caminho.begin(); it != caminho.end(); it++){
+				Point* point = *it;
+				pointsToGo.push(toPos(point->x, point->y));
+			}
+    
+    			if (!caminho.empty()) {
+				std::cout << "Path to patient room was defined!" << std::endl;
+    			} else {
+				std::cout << "Can't define a path to the desired location." << std::endl;
+				return BT::NodeStatus::FAILURE;
+    			}
+			
+			return BT::NodeStatus::SUCCESS;
+		}
+};
 
 //This node is resposible for getting user input about the delivery
 
@@ -173,9 +399,9 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 			: BT::StatefulActionNode(name, {}) {}
 
 		BT::NodeStatus onStart() override {
-			DeliveryInfo data = deliveries_list.front();
-			this -> targetX = data.x;
-			this -> targetY = data.y;
+			std::tuple<double,double> data = pointsToGo.front();
+			this -> targetX = std::get<0>(data);
+			this -> targetY = std::get<1>(data);
 
 			std::cout << "Initializing delivery process..." << std::endl;
 
@@ -205,6 +431,15 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 				this -> current_angular_error_ = 0.0;
 				this -> linear_error_sum_ = 0.0;
 				this -> angular_error_sum_ = 0.0;
+
+				if (!pointsToGo.empty()) {
+					pointsToGo.pop();
+					std::tuple<double,double> next_point = pointsToGo.front();
+					this -> targetX = std::get<0>(next_point);
+					this -> targetY = std::get<1>(next_point);
+
+					return BT::NodeStatus::RUNNING;
+				}
 
 				return BT::NodeStatus::SUCCESS;
 			}
