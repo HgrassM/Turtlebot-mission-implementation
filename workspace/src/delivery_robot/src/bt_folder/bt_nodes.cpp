@@ -26,7 +26,11 @@ std::queue<std::tuple<double,double>> pointsToGo;
 geometry_msgs::msg::Twist velocity;
 geometry_msgs::msg::Point current_position;
 geometry_msgs::msg::Quaternion quaternion_data;
+
 float batteryState = 0.0;
+
+bool isInKitchen = true;
+bool first_run = true;
 
 struct DeliveryInfo {
 	std::string food_id;
@@ -93,6 +97,7 @@ BT::NodeStatus BatteryStatus() {
 	battery_mutex.lock();
 	if (batteryState <= 0.10) {
 		battery_mutex.unlock();
+		std::cout << "Battery is extremely low. The delivery has been cancelled!" << std::endl;
 		return BT::NodeStatus::FAILURE;
 	}
 	battery_mutex.unlock();
@@ -283,19 +288,35 @@ class CalculatePath : public BT::SyncActionNode {
 
 			std::vector<std::vector<int>> mapa = lerArquivoPGM(nomeArquivo);
 
-    			int linhas = mapa.size();
-    			int colunas = mapa[0].size();
-
-    			Point* inicio = new Point(colunas/2-20, linhas/2);
-
-			DeliveryInfo data = deliveries_list.front();
-			Point objetivo = toIndex(data.x, data.y);
-    
-			std::vector<Point*> caminho = encontrarCaminhoAStar(mapa, inicio, &objetivo);
+    			//int linhas = mapa.size();
+    			//int colunas = mapa[0].size();
 			
+			Point inicio(0, 0);
+			Point objetivo(0, 0);
+			
+			if (isInKitchen && first_run) {
+				inicio = toIndex(0.0, 0.0);
+
+				DeliveryInfo data = deliveries_list.front();
+				objetivo = toIndex(data.x, data.y);
+			}else if (isInKitchen && !first_run) {
+    				inicio = toIndex(current_position.x, current_position.y);
+
+				DeliveryInfo data = deliveries_list.front();
+				objetivo = toIndex(data.x, data.y);
+			}else{
+				inicio = toIndex(current_position.x, current_position.y);
+				objetivo = toIndex(0.0, 0.0);
+			}
+    
+			std::vector<Point*> caminho = encontrarCaminhoAStar(mapa, &inicio, &objetivo);
+			std::cout << "Current pos: " << current_position.x << " " << current_position.y << std::endl;
+
 			for (auto it = caminho.begin(); it != caminho.end(); it++){
 				Point* point = *it;
 				pointsToGo.push(toPos(point->x, point->y));
+				std::tuple<double, double> ponto = pointsToGo.back();
+				std::cout << std::get<0>(ponto) << " " << std::get<1>(ponto) << std::endl;
 			}
     
     			if (!caminho.empty()) {
@@ -364,8 +385,10 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		double current_angular_error_ = 0.0;
 		double linear_error_sum_ = 0.0;
 		double angular_error_sum_ = 0.0;
-		const double KP_ = 0.05;
-		const double KI_ = 0.01;
+		const double KP_linear_ = 0.05;
+		const double KI_linear_ = 0.01;
+		const double KP_angular_ = 0.005;
+		const double KI_angular_ = 0.001;
 
 		void calculate_error() {
 			position_mutex.lock();
@@ -387,11 +410,11 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		}
 
 		double calculate_linear_velocity() {
-			return (KP_*current_linear_error_) + (KI_*linear_error_sum_);
+			return (KP_linear_*current_linear_error_) + (KI_linear_*linear_error_sum_);
 		}
 
 		double calculate_angular_velocity() {
-			return (KP_*current_angular_error_) + (KI_*angular_error_sum_);
+			return (KP_angular_*current_angular_error_) + (KI_angular_*angular_error_sum_);
 		}
 	
 	public:
@@ -431,15 +454,17 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 				this -> current_angular_error_ = 0.0;
 				this -> linear_error_sum_ = 0.0;
 				this -> angular_error_sum_ = 0.0;
-
+				
+				pointsToGo.pop();
 				if (!pointsToGo.empty()) {
-					pointsToGo.pop();
 					std::tuple<double,double> next_point = pointsToGo.front();
 					this -> targetX = std::get<0>(next_point);
 					this -> targetY = std::get<1>(next_point);
-
+					std::cout << "Arrived at point" << std::endl;
 					return BT::NodeStatus::RUNNING;
 				}
+
+				isInKitchen = false;
 
 				return BT::NodeStatus::SUCCESS;
 			}
@@ -448,7 +473,7 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		}
 
 		void onHalted() override {
-			std::cout << "The battery percentage has reached 10% or less. The delivery has been interrupted!" << std::endl; 
+			std::cout << "The process has been interrupted!" << std::endl; 
 		}
 };
 
@@ -489,14 +514,16 @@ class UpdateDeliveryInfo : public BT::SyncActionNode {
 
 class GoBackToKitchen : public BT::StatefulActionNode {
 	private:
-		const double targetX = 0.0;
-		const double targetY = 0.0;
+		double targetX = 0.0;
+		double targetY = 0.0;
 		double current_linear_error_ = 0.0;
 		double current_angular_error_ = 0.0;
 		double linear_error_sum_ = 0.0;
 		double angular_error_sum_ = 0.0;
-		const double KP_ = 0.05;
-		const double KI_ = 0.01;
+		const double KP_linear_ = 0.05;
+		const double KI_linear_ = 0.01;
+		const double KP_angular_ = 0.005;
+		const double KI_angular_ = 0.001;
 
 		void calculate_error() {
 			position_mutex.lock();
@@ -518,11 +545,11 @@ class GoBackToKitchen : public BT::StatefulActionNode {
 		}
 
 		double calculate_linear_velocity() {
-			return (KP_*current_linear_error_) + (KI_*linear_error_sum_);
+			return (KP_linear_*current_linear_error_) + (KI_linear_*linear_error_sum_);
 		}
 
 		double calculate_angular_velocity() {
-			return (KP_*current_angular_error_) + (KI_*angular_error_sum_);
+			return (KP_angular_*current_angular_error_) + (KI_angular_*angular_error_sum_);
 		}
 	
 	public:
@@ -531,6 +558,10 @@ class GoBackToKitchen : public BT::StatefulActionNode {
 
 		BT::NodeStatus onStart() override {
 			std::cout << "Going back to kitchen..." << std::endl;
+			
+			std::tuple<double,double> data = pointsToGo.front();
+			this -> targetX = std::get<0>(data);
+			this -> targetY = std::get<1>(data);
 
 			return BT::NodeStatus::RUNNING;
 		}
@@ -558,6 +589,17 @@ class GoBackToKitchen : public BT::StatefulActionNode {
 				this -> current_angular_error_ = 0.0;
 				this -> linear_error_sum_ = 0.0;
 				this -> angular_error_sum_ = 0.0;
+				
+				pointsToGo.pop();
+				if (!pointsToGo.empty()) {
+					std::tuple<double,double> next_point = pointsToGo.front();
+					this -> targetX = std::get<0>(next_point);
+					this -> targetY = std::get<1>(next_point);
+					std::cout << "Arrived at point" << std::endl;
+					return BT::NodeStatus::RUNNING;
+				}
+
+				isInKitchen = true;
 
 				return BT::NodeStatus::SUCCESS;
 			}
@@ -566,7 +608,7 @@ class GoBackToKitchen : public BT::StatefulActionNode {
 		}
 
 		void onHalted() override {
-			std::cout << "The battery precentage reached 10% or less. The delivery has been interrupted!" << std::endl;
+			std::cout << "The process has been interrupted!" << std::endl;
 		}
 
 };
