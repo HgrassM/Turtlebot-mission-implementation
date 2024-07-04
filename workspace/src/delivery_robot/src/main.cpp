@@ -9,70 +9,12 @@
 
 using namespace std::chrono_literals;
 
-static const char *xml_tree = R"(<?xml version="1.0" encoding="UTF-8"?>
-<root BTCPP_format="3"
-      main_tree_to_execute="FoodDelivery">
-  <BehaviorTree ID="FoodDelivery">
-    <Fallback>
-      <ForceFailure>
-        <Sequence>
-          <RegisterDeliveryInfo given_deliveries="{delivery_num}"/>
-          <IsFoodOnRobot/>
-          <Repeat num_cycles="{delivery_num}">
-            <ReactiveSequence>
-              <ReactiveSequence>
-                <BatteryStatus/>
-                <GoToPatientRoom/>
-              </ReactiveSequence>
-              <DisplayFoodInfo/>
-              <IsFoodTaken/>
-              <UpdateDeliveryInfo/>
-            </ReactiveSequence>
-          </Repeat>
-        </Sequence>
-      </ForceFailure>
-      <Fallback>
-        <IsRobotOnKitchen/>
-        <ReactiveSequence>
-          <BatteryStatus/>
-          <GoBackToKitchen/>
-        </ReactiveSequence>
-      </Fallback>
-    </Fallback>
-  </BehaviorTree>
-
-  <!-- Description of Node Models (used by Groot) -->
-  <TreeNodesModel>
-    <Condition ID="BatteryStatus"
-               editable="true"/>
-    <Action ID="DisplayFoodInfo"
-            editable="true"/>
-    <Action ID="GoBackToKitchen"
-            editable="true"/>
-    <Action ID="GoToPatientRoom"
-            editable="true"/>
-    <Condition ID="IsFoodOnRobot"
-               editable="true"/>
-    <Condition ID="IsFoodTaken"
-               editable="true"/>
-    <Condition ID="IsRobotOnKitchen"
-               editable="true"/>
-    <Action ID="RegisterDeliveryInfo"
-            editable="true">
-      <output_port name="given_deliveries"/>
-    </Action>
-    <Action ID="UpdateDeliveryInfo"
-            editable="true"/>
-  </TreeNodesModel>
-
-</root>)";
-
 void tick_tree(BT::BehaviorTreeFactory tree_factory) {
-			auto tree = tree_factory.createTreeFromText(xml_tree);
+	auto tree = tree_factory.createTreeFromFile("src/delivery_robot/src/bt_folder/deliveryTree.xml");
 			
-			while (true) {
-				tree.tickRootWhileRunning();
-			}
+	while (true) {
+		tree.tickRootWhileRunning();
+	}
 }
 
 class ExecutionNode : public rclcpp::Node {
@@ -122,12 +64,13 @@ class ExecutionNode : public rclcpp::Node {
 			factory.registerNodeType<DisplayFoodInfo>("DisplayFoodInfo");
 			factory.registerNodeType<UpdateDeliveryInfo>("UpdateDeliveryInfo");
 			factory.registerNodeType<GoBackToKitchen>("GoBackToKitchen");
+			factory.registerNodeType<CalculatePath>("CalculatePath");
 
 			factory.registerSimpleCondition("IsFoodOnRobot", std::bind(IsFoodOnRobot));
 			factory.registerSimpleCondition("BatteryStatus", std::bind(BatteryStatus));
 			factory.registerSimpleCondition("IsFoodTaken", std::bind(IsFoodTaken));
-			factory.registerSimpleCondition("IsRobotOnKitchen", std::bind(IsRobotOnKitchen));
-			
+			factory.registerSimpleCondition("IsRobotOnKitchen", std::bind(IsRobotOnKitchen));		
+
 			thread_stack_.push(std::thread(tick_tree, factory));
 		}
 };
