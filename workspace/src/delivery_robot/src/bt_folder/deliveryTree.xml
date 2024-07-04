@@ -25,10 +25,13 @@
       </ForceFailure>
       <Fallback>
         <IsRobotOnKitchen/>
-        <ReactiveSequence>
-          <BatteryStatus/>
-          <GoBackToKitchen/>
-        </ReactiveSequence>
+        <Sequence>
+          <CalculatePath/>
+          <ReactiveSequence>
+            <BatteryStatus/>
+            <GoBackToKitchen/>
+          </ReactiveSequence>
+        </Sequence>
       </Fallback>
     </Fallback>
   </BehaviorTree>
