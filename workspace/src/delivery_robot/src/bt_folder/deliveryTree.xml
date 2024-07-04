@@ -8,15 +8,18 @@
           <RegisterDeliveryInfo given_deliveries="{delivery_num}"/>
           <IsFoodOnRobot/>
           <Repeat num_cycles="{delivery_num}">
-            <ReactiveSequence>
+            <Sequence>
+              <CalculatePath/>
               <ReactiveSequence>
-                <BatteryStatus/>
-                <GoToPatientRoom/>
+                <ReactiveSequence>
+                  <BatteryStatus/>
+                  <GoToPatientRoom/>
+                </ReactiveSequence>
+                <DisplayFoodInfo/>
+                <IsFoodTaken/>
+                <UpdateDeliveryInfo/>
               </ReactiveSequence>
-              <DisplayFoodInfo/>
-              <IsFoodTaken/>
-              <UpdateDeliveryInfo/>
-            </ReactiveSequence>
+            </Sequence>
           </Repeat>
         </Sequence>
       </ForceFailure>
@@ -34,6 +37,8 @@
   <TreeNodesModel>
     <Condition ID="BatteryStatus"
                editable="true"/>
+    <Action ID="CalculatePath"
+            editable="true"/>
     <Action ID="DisplayFoodInfo"
             editable="true"/>
     <Action ID="GoBackToKitchen"
