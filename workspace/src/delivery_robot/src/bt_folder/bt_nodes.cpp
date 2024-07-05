@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <mutex>
 #include <cmath>
@@ -16,21 +17,24 @@
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 std::mutex battery_mutex;
 std::mutex position_mutex;
 std::mutex twist_mutex;
+std::mutex laser_mutex;
 
 std::queue<std::tuple<double,double>> pointsToGo;
 
 geometry_msgs::msg::Twist velocity;
 geometry_msgs::msg::Point current_position;
 geometry_msgs::msg::Quaternion quaternion_data;
+sensor_msgs::msg::LaserScan laser_data;
 
 float batteryState = 0.0;
 
-bool isInKitchen = true;
 bool first_run = true;
+bool back_to_kitchen = false;
 
 struct DeliveryInfo {
 	std::string food_id;
@@ -97,10 +101,48 @@ BT::NodeStatus BatteryStatus() {
 	battery_mutex.lock();
 	if (batteryState <= 0.10) {
 		battery_mutex.unlock();
-		std::cout << "Battery is extremely low. The delivery has been cancelled!" << std::endl;
+		std::cout << "Battery is extremely low. The delivery has been cancelled!" << std::endl << std::endl;
+		std::cout << "Going back to the kitchen!" << std::endl << std::endl;
+		
+		while (!pointsToGo.empty()) {
+			pointsToGo.pop();
+		}
+		
 		return BT::NodeStatus::FAILURE;
 	}
 	battery_mutex.unlock();
+
+	return BT::NodeStatus::SUCCESS;
+}
+
+//This function checks if there is an obstacle in front of the robot
+
+BT::NodeStatus IsThereObstacle() {
+	laser_mutex.lock();
+	auto ranges_data = laser_data.ranges;
+	float angle_inc = laser_data.angle_increment;
+	laser_mutex.unlock();
+	
+	float angle = 0.0;
+	int index = 0;
+
+	while (angle <= (M_PI/4)) {
+		angle += angle_inc;
+		index += 1;
+	}
+
+	for (int i = index; i<=(index*3); i++) {
+		if (ranges_data[i] <= 0.5) {
+			while (ranges_data[i] <= 0.5) {
+				laser_mutex.lock();
+				ranges_data = laser_data.ranges;
+				laser_mutex.unlock();
+				
+				velocity.linear.x = 0.0;
+				velocity.angular.z = 0.0;
+			}
+		}
+	}
 
 	return BT::NodeStatus::SUCCESS;
 }
@@ -124,6 +166,11 @@ BT::NodeStatus IsFoodTaken() {
 
 BT::NodeStatus IsRobotOnKitchen() {
 	if ((current_position.x >= -0.5 && current_position.x <= 0.5) && (current_position.y >= -0.5 && current_position.y <= 0.5)){
+
+		while (!deliveries_list.empty()) {
+			deliveries_list.pop();
+		}
+
 		return BT::NodeStatus::SUCCESS;
 	}
 
@@ -294,12 +341,12 @@ class CalculatePath : public BT::SyncActionNode {
 			Point inicio(0, 0);
 			Point objetivo(0, 0);
 			
-			if (isInKitchen && first_run) {
+			if (first_run && !back_to_kitchen) {
 				inicio = toIndex(0.0, 0.0);
 
 				DeliveryInfo data = deliveries_list.front();
 				objetivo = toIndex(data.x, data.y);
-			}else if (isInKitchen && !first_run) {
+			}else if (!first_run && !back_to_kitchen) {
     				inicio = toIndex(current_position.x, current_position.y);
 
 				DeliveryInfo data = deliveries_list.front();
@@ -310,19 +357,26 @@ class CalculatePath : public BT::SyncActionNode {
 			}
     
 			std::vector<Point*> caminho = encontrarCaminhoAStar(mapa, &inicio, &objetivo);
-			std::cout << "Current pos: " << current_position.x << " " << current_position.y << std::endl;
-
-			for (auto it = caminho.begin(); it != caminho.end(); it++){
+			std::cout << "Current pos: " << current_position.x << " " << current_position.y << std::endl;	
+    
+    			if (!caminho.empty()) {
+				for (auto it = caminho.begin(); it != caminho.end(); it++){
 				Point* point = *it;
 				pointsToGo.push(toPos(point->x, point->y));
 				std::tuple<double, double> ponto = pointsToGo.back();
-				std::cout << std::get<0>(ponto) << " " << std::get<1>(ponto) << std::endl;
+
+				std::cout << "Position from path: (" << std::get<0>(ponto) << " " << std::get<1>(ponto) << ")" << std::endl;
 			}
-    
-    			if (!caminho.empty()) {
-				std::cout << "Path to patient room was defined!" << std::endl;
+				std::cout << std::endl <<"Path to patient room was defined!" << std::endl;
     			} else {
-				std::cout << "Can't define a path to the desired location." << std::endl;
+				std::cout << std::endl << "Can't define a path to the desired location." << std::endl;
+				
+				while (!deliveries_list.empty()) {
+					deliveries_list.pop();
+				}
+
+				back_to_kitchen = true;
+
 				return BT::NodeStatus::FAILURE;
     			}
 			
@@ -347,14 +401,14 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 			std::string y = "0.0";
 			std::string deliveries_num = "0";
 			
-			std::cout << "Type the number of food items that you want to deliver: " << std::endl;
+			std::cout << "Type the number of food items that you want to deliver: ";
 
 			while (std::stoi(deliveries_num) <= 0) {
 				std::cin >> deliveries_num;
 			}
 
 			for (int i = 0; i<std::stoi(deliveries_num); i++) {
-				std::cout << "Type the food identification of your desire: ";
+				std::cout << std::endl << "Type the food identification of your desire: ";
 				std::cin >> food_id;
 
 				std::cout << std::endl << "Now type the x coordinate of the room: ";
@@ -377,8 +431,9 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 
 //This node is responsible for the movement of the robot using a PID controller
 
-class GoToPatientRoom : public BT::StatefulActionNode {
+class GoToPath : public BT::StatefulActionNode {
 	private:
+		double time = 0.0;
 		double targetX = 0.0;
 		double targetY = 0.0;
 		double current_linear_error_ = 0.0;
@@ -418,7 +473,7 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		}
 	
 	public:
-		GoToPatientRoom(const std::string& name)
+		GoToPath(const std::string& name)
 			: BT::StatefulActionNode(name, {}) {}
 
 		BT::NodeStatus onStart() override {
@@ -434,6 +489,18 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 		BT::NodeStatus onRunning() override {
 			this -> calculate_error();
 			
+			position_mutex.lock();
+			twist_mutex.lock();
+
+			if (velocity.linear.x != 0.0) {
+				time = abs((deliveries_list.front().x - current_position.x)/velocity.linear.x);
+			}
+
+			twist_mutex.unlock();
+			position_mutex.unlock();
+
+			std::cout << "\r" << "Estimated time to complete in seconds: " << std::fixed << std::setprecision(3) << time;
+			
 			if (abs(this -> current_angular_error_) > 0.3) {
 				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
@@ -447,7 +514,7 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 			}else{
 				twist_mutex.lock();
 				velocity.linear.x = 0.0;
-				velocity.linear.z = 0.0;
+				velocity.angular.z = 0.0;
 				twist_mutex.unlock();
 			
 				this -> current_linear_error_ = 0.0;
@@ -460,11 +527,17 @@ class GoToPatientRoom : public BT::StatefulActionNode {
 					std::tuple<double,double> next_point = pointsToGo.front();
 					this -> targetX = std::get<0>(next_point);
 					this -> targetY = std::get<1>(next_point);
-					std::cout << "Arrived at point" << std::endl;
+					
 					return BT::NodeStatus::RUNNING;
 				}
+				
+				if (((current_position.x >= -0.5 && current_position.x <= 0.5) 
+					&& (current_position.y >= -0.5 && current_position.y <= 0.5)) || first_run){
+					back_to_kitchen = false;
+				}
 
-				isInKitchen = false;
+				first_run = false;
+				std::cout << std::endl;
 
 				return BT::NodeStatus::SUCCESS;
 			}
@@ -501,6 +574,7 @@ class UpdateDeliveryInfo : public BT::SyncActionNode {
 
 		BT::NodeStatus tick() override {
 			if (deliveries_list.empty()) {
+				back_to_kitchen = true;
 				return BT::NodeStatus::SUCCESS;
 			}
 
@@ -508,107 +582,4 @@ class UpdateDeliveryInfo : public BT::SyncActionNode {
 			
 			return BT::NodeStatus::SUCCESS;
 		}
-};
-
-//This node is responsible for making the robot go back to the kitchen
-
-class GoBackToKitchen : public BT::StatefulActionNode {
-	private:
-		double targetX = 0.0;
-		double targetY = 0.0;
-		double current_linear_error_ = 0.0;
-		double current_angular_error_ = 0.0;
-		double linear_error_sum_ = 0.0;
-		double angular_error_sum_ = 0.0;
-		const double KP_linear_ = 0.05;
-		const double KI_linear_ = 0.01;
-		const double KP_angular_ = 0.005;
-		const double KI_angular_ = 0.001;
-
-		void calculate_error() {
-			position_mutex.lock();
-			double linear_error = sqrt((pow((this -> targetX - current_position.x), 2.0)) + pow((this -> targetY - current_position.y),2.0));
-			
-			double target_angle = atan2(this -> targetY - current_position.y, this -> targetX - current_position.x);
-			
-			double current_angle = atan2(2.0*(quaternion_data.y*quaternion_data.x + 
-					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(pow(quaternion_data.z, 2.0) +
-					pow(quaternion_data.y, 2.0)));
-			position_mutex.unlock();
-
-			double angular_error = target_angle - current_angle;
-			
-			this -> current_linear_error_ = linear_error;
-			this -> current_angular_error_ = angular_error;
-			this -> linear_error_sum_ += linear_error;
-			this -> angular_error_sum_ += angular_error;
-		}
-
-		double calculate_linear_velocity() {
-			return (KP_linear_*current_linear_error_) + (KI_linear_*linear_error_sum_);
-		}
-
-		double calculate_angular_velocity() {
-			return (KP_angular_*current_angular_error_) + (KI_angular_*angular_error_sum_);
-		}
-	
-	public:
-		GoBackToKitchen(const std::string& name)
-			: BT::StatefulActionNode(name, {}) {}
-
-		BT::NodeStatus onStart() override {
-			std::cout << "Going back to kitchen..." << std::endl;
-			
-			std::tuple<double,double> data = pointsToGo.front();
-			this -> targetX = std::get<0>(data);
-			this -> targetY = std::get<1>(data);
-
-			return BT::NodeStatus::RUNNING;
-		}
-
-		BT::NodeStatus onRunning() override {
-			this -> calculate_error();
-			
-			if (abs(this -> current_angular_error_) > 0.3) {
-				twist_mutex.lock();
-				velocity.angular.z = this -> calculate_angular_velocity();
-				velocity.linear.x = 0.0;
-				twist_mutex.unlock();
-			}else if (abs(this -> current_linear_error_) > 0.1) {
-				twist_mutex.lock();
-				velocity.angular.z = 0.0;
-				velocity.linear.x = this -> calculate_linear_velocity();
-				twist_mutex.unlock();
-			}else{
-				twist_mutex.lock();
-				velocity.linear.x = 0.0;
-				velocity.linear.z = 0.0;
-				twist_mutex.unlock();
-
-				this -> current_linear_error_ = 0.0;
-				this -> current_angular_error_ = 0.0;
-				this -> linear_error_sum_ = 0.0;
-				this -> angular_error_sum_ = 0.0;
-				
-				pointsToGo.pop();
-				if (!pointsToGo.empty()) {
-					std::tuple<double,double> next_point = pointsToGo.front();
-					this -> targetX = std::get<0>(next_point);
-					this -> targetY = std::get<1>(next_point);
-					std::cout << "Arrived at point" << std::endl;
-					return BT::NodeStatus::RUNNING;
-				}
-
-				isInKitchen = true;
-
-				return BT::NodeStatus::SUCCESS;
-			}
-
-			return BT::NodeStatus::RUNNING;
-		}
-
-		void onHalted() override {
-			std::cout << "The process has been interrupted!" << std::endl;
-		}
-
 };
