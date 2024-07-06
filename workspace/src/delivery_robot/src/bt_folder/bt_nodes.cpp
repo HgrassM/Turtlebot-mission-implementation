@@ -8,6 +8,7 @@
 #include <tuple>
 #include <fstream>
 #include <algorithm>
+#include <unordered_map>
 
 #include "behaviortree_cpp_v3/behavior_tree.h"
 #include "behaviortree_cpp_v3/action_node.h"
@@ -42,6 +43,14 @@ struct DeliveryInfo {
 	double y;
 };
 
+struct RoomInfo {
+	std::string patient_name;
+	std::string room_nurse_name;
+	int patient_age;
+	bool isImpaired;
+	std::tuple<double, double> room_coordinate;
+};
+
 struct Point {
     int x, y;
     double f, g, h; 
@@ -58,6 +67,7 @@ struct Point {
 };
 
 std::queue<DeliveryInfo> deliveries_list;
+std::unordered_map<std::string, RoomInfo> rooms_data;
 
 std::tuple<double,double> toPos(int x, int y){
 	float escala = 0.03;
@@ -364,7 +374,7 @@ class CalculatePath : public BT::SyncActionNode {
 				Point* point = *it;
 				pointsToGo.push(toPos(point->x, point->y));
 				std::tuple<double, double> ponto = pointsToGo.back();
-
+				
 				std::cout << "Position from path: (" << std::get<0>(ponto) << " " << std::get<1>(ponto) << ")" << std::endl;
 			}
 				std::cout << std::endl <<"Path to patient room was defined!" << std::endl;
@@ -397,28 +407,50 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 
 		BT::NodeStatus tick() override {
 			std::string food_id = "";
-			std::string x = "0.0";
-			std::string y = "0.0";
+			std::string room_id = "";
 			std::string deliveries_num = "0";
-			
+			auto key_existence = rooms_data.end();
+
 			std::cout << "Type the number of food items that you want to deliver: ";
 
 			while (std::stoi(deliveries_num) <= 0) {
 				std::cin >> deliveries_num;
 			}
 
+			std::cout << std::endl << "These are the rooms available for delivery:" << std::endl;
+
+			for (auto it = rooms_data.begin(); it != rooms_data.end(); it++) {
+				RoomInfo r_data = it->second;
+
+				std::cout << " " << it->first << std::endl;
+				std::cout << "   " << "Patient name: " << r_data.patient_name << std::endl;
+				std::cout << "   " << "Nurse name: "<< r_data.room_nurse_name << std::endl;
+				std::cout << "   " << "Patient's age: " << r_data.patient_age << std::endl;
+
+				if (r_data.isImpaired) {
+					std::cout << "   " << "Can patient take his own food: NO" << std::endl;
+				}else{
+					std::cout << "   " << "Can patient take his own food: YES" << std::endl;
+				}
+			}
+
 			for (int i = 0; i<std::stoi(deliveries_num); i++) {
 				std::cout << std::endl << "Type the food identification of your desire: ";
 				std::cin >> food_id;
-
-				std::cout << std::endl << "Now type the x coordinate of the room: ";
-				std::cin >> x;
-
-				std::cout << std::endl << "Now type the y coordinate of the room: ";
-				std::cin >> y;
-				std::cout << std::endl << std::endl;
-
-				DeliveryInfo info = {food_id, std::stod(x), std::stod(y)};
+				
+				while (key_existence == rooms_data.end()) {
+					std::cout << std::endl << "Now type the room identification as listed above to deliver the food: ";
+					std::cin >> room_id;
+					std::cout << std::endl;
+					key_existence = rooms_data.find(room_id);
+					if (key_existence == rooms_data.end()) {
+						std::cout << "There's no such room. Please, type the correct room identification." << std::endl;
+					}
+				}
+				
+				RoomInfo room = rooms_data.at(room_id);
+				std::tuple<double,double> coordinate = room.room_coordinate;
+				DeliveryInfo info = {food_id, std::get<0>(coordinate), std::get<1>(coordinate)};
 
 				deliveries_list.push(info);
 			}
@@ -469,6 +501,9 @@ class GoToPath : public BT::StatefulActionNode {
 		}
 
 		double calculate_angular_velocity() {
+			if (current_angular_error_ < (M_PI*-1) || current_angular_error_ > M_PI)  {
+				return (KP_angular_*(current_angular_error_/4)*-1) + (KI_angular_*(angular_error_sum_/4)*-1);
+			}
 			return (KP_angular_*current_angular_error_) + (KI_angular_*angular_error_sum_);
 		}
 	
