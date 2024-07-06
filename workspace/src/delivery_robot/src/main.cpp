@@ -54,6 +54,8 @@ class ExecutionNode : public rclcpp::Node {
 
 	public:
 		ExecutionNode() : Node("execution_node"), count_(0) {
+			
+			//Initializing variables
 			odom_subscriber_ = rclcpp::Node::create_subscription<nav_msgs::msg::Odometry>(
 					"odom", 10, std::bind(&ExecutionNode::odom_callback, this, std::placeholders::_1));
 			rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -65,7 +67,8 @@ class ExecutionNode : public rclcpp::Node {
 					"scan", qos, std::bind(&ExecutionNode::laser_callback, this, std::placeholders::_1));
 			twist_publisher_ = rclcpp::Node::create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
 			timer_ = this -> create_wall_timer(100ms, std::bind(&ExecutionNode::twist_callback, this));
-
+			
+			//Creating behavior tree
 			BT::BehaviorTreeFactory factory;
 
 			factory.registerNodeType<RegisterDeliveryInfo>("RegisterDeliveryInfo");
@@ -79,7 +82,19 @@ class ExecutionNode : public rclcpp::Node {
 			factory.registerSimpleCondition("IsFoodTaken", std::bind(IsFoodTaken));
 			factory.registerSimpleCondition("IsRobotOnKitchen", std::bind(IsRobotOnKitchen));
 			factory.registerSimpleCondition("IsThereObstacle", std::bind(IsThereObstacle));		
+			
+			//Storing the rooms information on the hash map
+			std::tuple<double,double> coord_1(-2.5,-3.0);
+			std::tuple<double,double> coord_2(2.0,-7.0);
+			std::tuple<double,double> coord_3(13.5,-12.0);
+			std::tuple<double,double> coord_4(-14,13.0);
 
+			rooms_data["UTI-1"] = {"Pedro", "Joana", 34, true, coord_1};
+			rooms_data["UTI-2"] = {"Joao", "NULL", 27, false, coord_2};
+			rooms_data["UTI-3"] = {"Cleberson", "NULL", 52, false, coord_3};
+			rooms_data["UTI-4"] = {"Carlos", "Maria", 74, true, coord_4};
+			
+			//Initializing behavior tree thread
 			thread_stack_.push(std::thread(tick_tree, factory));
 		}
 };
