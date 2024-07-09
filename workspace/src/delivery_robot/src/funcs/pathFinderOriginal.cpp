@@ -82,11 +82,27 @@ vector<Point*> encontrarCaminhoAStar(vector<vector<int>>& mapa, Point* inicio, P
 
         vector<Point*> caminho;
         if (atual->x == objetivo->x && atual->y == objetivo->y  ) {
+
+            // INICIO DA MUDANÇA
+            
+            Point* intr = atual;
             for (Point* p = atual; p != nullptr; p = p->parent) {
+                if ( min(abs(atual->x - p->x), abs(atual->y - p->y)) <= 0 ){
+                    intr = p;
+                }
+                else{
+                    caminho.push_back(intr);
+                    atual = p;
+                }
                 mapa[p->y][p->x] = 0;
-                caminho.push_back(p);
 
             }
+            caminho.push_back(intr);
+
+
+
+            // FIM DA MUDANÇA
+            
             reverse(caminho.begin(), caminho.end());
             return caminho;
         }
