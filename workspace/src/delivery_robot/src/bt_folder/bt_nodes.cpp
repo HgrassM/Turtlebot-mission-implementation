@@ -142,8 +142,8 @@ BT::NodeStatus IsThereObstacle() {
 	}
 
 	for (int i = index; i<=(index*3); i++) {
-		if (ranges_data[i] <= 0.5) {
-			while (ranges_data[i] <= 0.5) {
+		if (ranges_data[i] <= 0.3) {
+			while (ranges_data[i] <= 0.4) {
 				laser_mutex.lock();
 				ranges_data = laser_data.ranges;
 				laser_mutex.unlock();
@@ -250,13 +250,23 @@ class CalculatePath : public BT::SyncActionNode {
 
 			std::vector<Point*> caminho;
 			if (atual->x == objetivo->x && atual->y == objetivo->y  ) {
-			    for (Point* p = atual; p != nullptr; p = p->parent) {
-				mapa[p->y][p->x] = 0;
-				caminho.push_back(p);
+			
+			    Point* intr = atual;
+            		    for (Point* p = atual; p != nullptr; p = p->parent) {
+                	    if ( std::min(abs(atual->x - p->x), abs(atual->y - p->y)) <= 0 ){
+                    		intr = p;
+                	    }else{
+                    		caminho.push_back(intr);
+                    		atual = p;
+                	    }
+                	    mapa[p->y][p->x] = 0;
 
-			    }
-			    reverse(caminho.begin(), caminho.end());
-			    return caminho;
+            		}
+            		caminho.push_back(intr);
+            
+            		reverse(caminho.begin(), caminho.end());
+            		return caminho;
+
 			}
 
 			for (auto& dir : direcoes) {
@@ -371,13 +381,12 @@ class CalculatePath : public BT::SyncActionNode {
     
     			if (!caminho.empty()) {
 				for (auto it = caminho.begin(); it != caminho.end(); it++){
-				Point* point = *it;
-				pointsToGo.push(toPos(point->x, point->y));
-				std::tuple<double, double> ponto = pointsToGo.back();
+					Point* point = *it;
+					pointsToGo.push(toPos(point->x, point->y));
+					std::tuple<double, double> ponto = pointsToGo.back();
 				
-				std::cout << "Position from path: (" << std::get<0>(ponto) << " " << std::get<1>(ponto) << ")" << std::endl;
-			}
-				std::cout << std::endl <<"Path to patient room was defined!" << std::endl;
+					std::cout << "Position from path: (" << std::get<0>(ponto) << " " << std::get<1>(ponto) << ")" << std::endl;
+				}
     			} else {
 				std::cout << std::endl << "Can't define a path to the desired location." << std::endl;
 				
@@ -390,6 +399,12 @@ class CalculatePath : public BT::SyncActionNode {
 				return BT::NodeStatus::FAILURE;
     			}
 			
+			DeliveryInfo data = deliveries_list.front();
+			std::tuple<double,double> final_point = std::make_tuple((double)data.x, (double)data.y);
+			pointsToGo.push(final_point);
+			std::cout << "Final point: (" << (double)data.x << " " << (double)data.y << ")" << std::endl;
+			std::cout << std::endl <<"Path to patient room was defined!" << std::endl;
+	
 			return BT::NodeStatus::SUCCESS;
 		}
 };
@@ -453,6 +468,8 @@ class RegisterDeliveryInfo : public BT::SyncActionNode {
 				DeliveryInfo info = {food_id, std::get<0>(coordinate), std::get<1>(coordinate)};
 
 				deliveries_list.push(info);
+
+				key_existence = rooms_data.end();
 			}
 
 			setOutput("given_deliveries", std::stoi(deliveries_num));
@@ -474,21 +491,55 @@ class GoToPath : public BT::StatefulActionNode {
 		double angular_error_sum_ = 0.0;
 		const double KP_linear_ = 0.05;
 		const double KI_linear_ = 0.01;
-		const double KP_angular_ = 0.005;
-		const double KI_angular_ = 0.001;
+		const double KP_angular_ = 0.05;
+		const double KI_angular_ = 0.01;
+		bool horario = true;
 
 		void calculate_error() {
 			position_mutex.lock();
 			double linear_error = sqrt((pow((this -> targetX - current_position.x), 2.0)) + pow((this -> targetY - current_position.y), 2.0));
 			
 			double target_angle = atan2(this -> targetY - current_position.y, this -> targetX - current_position.x);
-			
+			if (target_angle < 0) {
+				target_angle += 2*M_PI;
+			}
+
 			double current_angle = atan2(2.0*(quaternion_data.y*quaternion_data.x + 
 					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(pow(quaternion_data.z, 2.0) +
 					pow(quaternion_data.y, 2.0)));
+			if (current_angle < 0) {
+				current_angle += 2*M_PI;
+			}
+			if (target_angle < 0.2) {
+				target_angle += 0.1;
+			}
+			if (target_angle > 6.18) {
+				target_angle -= 0.1;
+			}
+			if (target_angle > 0 && target_angle <= 0.5 && current_angle <= 0.6 && current_angle > 0.5) {
+				this -> angular_error_sum_ = 0.0;
+			}
+			while (target_angle >= 6.28) {
+				target_angle -= 0.2;
+			}
+			if (target_angle >= 6.08 && target_angle < 6.28 && current_angle <= 6.08 && current_angle > 5.88) {
+				this -> angular_error_sum_ = 0.0;
+			}	
+			/*
+			std::cout << "Current angle: " << current_angle << " Target angle: " << target_angle << std::endl;
+			std::cout << "Position: " << current_position.x << " " << current_position.y << std::endl;
+			*/
 			position_mutex.unlock();
+			
+			double angular_error = 0.0;
 
-			double angular_error = target_angle - current_angle;
+			if (target_angle > current_angle) {
+				angular_error = target_angle - current_angle;
+				horario = true;
+			}else{
+				angular_error = current_angle - target_angle;
+				horario = false;
+			}
 			
 			this -> current_linear_error_ = linear_error;
 			this -> current_angular_error_ = angular_error;
@@ -501,9 +552,10 @@ class GoToPath : public BT::StatefulActionNode {
 		}
 
 		double calculate_angular_velocity() {
-			if (current_angular_error_ < (M_PI*-1) || current_angular_error_ > M_PI)  {
-				return (KP_angular_*(current_angular_error_/4)*-1) + (KI_angular_*(angular_error_sum_/4)*-1);
+			if (!horario) {
+				return (KP_angular_*current_angular_error_*-1) + (KI_angular_*angular_error_sum_*-1);
 			}
+
 			return (KP_angular_*current_angular_error_) + (KI_angular_*angular_error_sum_);
 		}
 	
@@ -534,18 +586,20 @@ class GoToPath : public BT::StatefulActionNode {
 			twist_mutex.unlock();
 			position_mutex.unlock();
 
-			std::cout << "\r" << "Estimated time to complete in seconds: " << std::fixed << std::setprecision(3) << time;
+			//std::cout << "\r" << "Estimated time to complete in seconds: " << std::fixed << std::setprecision(3) << time;
 			
-			if (abs(this -> current_angular_error_) > 0.3) {
+			if (fabs(this -> current_angular_error_) > 0.008 && current_linear_error_ > 0.3) {
 				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
 				twist_mutex.unlock();
-			}else if (abs(this -> current_linear_error_) > 0.1) {
+
+			}else if (fabs(this -> current_linear_error_) > 0.1) {
 				twist_mutex.lock();
-				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
 				twist_mutex.unlock();
+
+				this -> angular_error_sum_ = 0.0;
 			}else{
 				twist_mutex.lock();
 				velocity.linear.x = 0.0;
@@ -594,7 +648,11 @@ class DisplayFoodInfo : public BT::SyncActionNode {
 
 		BT::NodeStatus tick() override {
 			DeliveryInfo data = deliveries_list.front();
-			std::cout << "The food has arrived! " << std::endl << "Take the food with this id: " << data.food_id << std::endl;
+			std::cout << "The food has arrived! " << std::endl;
+			battery_mutex.lock();
+			std::cout << "The mission was completed with " << 100.0*batteryState << "%" << " of battery." << std::endl; 
+			battery_mutex.unlock();
+			std::cout << std::endl << "Take the food with this id: " << data.food_id << std::endl;
 			
 			return BT::NodeStatus::SUCCESS;
 		}
