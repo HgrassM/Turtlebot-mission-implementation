@@ -86,7 +86,7 @@ class ExecutionNode : public rclcpp::Node {
 			//Storing the rooms information on the hash map
 			std::tuple<double,double> coord_1(-2.5,-3.0);
 			std::tuple<double,double> coord_2(2.0,-7.0);
-			std::tuple<double,double> coord_3(13.5,-12.0);
+			std::tuple<double,double> coord_3(12.0,-20.5);
 			std::tuple<double,double> coord_4(-14,13.0);
 
 			rooms_data["UTI-1"] = {"Pedro", "Joana", 34, true, coord_1};
