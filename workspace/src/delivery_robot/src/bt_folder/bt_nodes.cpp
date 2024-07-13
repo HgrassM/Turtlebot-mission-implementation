@@ -9,6 +9,7 @@
 #include <fstream>
 #include <algorithm>
 #include <unordered_map>
+#include <chrono>
 
 #include "behaviortree_cpp_v3/behavior_tree.h"
 #include "behaviortree_cpp_v3/action_node.h"
@@ -250,23 +251,21 @@ class CalculatePath : public BT::SyncActionNode {
 
 			std::vector<Point*> caminho;
 			if (atual->x == objetivo->x && atual->y == objetivo->y  ) {
-			
-			    Point* intr = atual;
-            		    for (Point* p = atual; p != nullptr; p = p->parent) {
-                	    if ( std::min(abs(atual->x - p->x), abs(atual->y - p->y)) <= 0 ){
-                    		intr = p;
-                	    }else{
-                    		caminho.push_back(intr);
-                    		atual = p;
-                	    }
-                	    mapa[p->y][p->x] = 0;
-
-            		}
-            		caminho.push_back(intr);
-            
-            		reverse(caminho.begin(), caminho.end());
-            		return caminho;
-
+            			Point* intr = atual;
+            			for (Point* p = atual; p != nullptr; p = p->parent) {
+                			if (std::min(abs(atual->x - p->x), abs(atual->y - p->y)) <= 0 ){
+                    				intr = p;
+                			}else{
+                    				caminho.push_back(intr);
+                    				atual = p;
+                			}
+        	        		mapa[p->y][p->x] = 0;
+	
+            			}
+            			caminho.push_back(intr);
+				
+				reverse(caminho.begin(), caminho.end());
+            			return caminho;
 			}
 
 			for (auto& dir : direcoes) {
@@ -367,12 +366,12 @@ class CalculatePath : public BT::SyncActionNode {
 				DeliveryInfo data = deliveries_list.front();
 				objetivo = toIndex(data.x, data.y);
 			}else if (!first_run && !back_to_kitchen) {
-    				inicio = toIndex(current_position.x, current_position.y);
+    				inicio = toIndex(current_position.x - 0.70, current_position.y + 0.60);
 
 				DeliveryInfo data = deliveries_list.front();
 				objetivo = toIndex(data.x, data.y);
 			}else{
-				inicio = toIndex(current_position.x, current_position.y);
+				inicio = toIndex(current_position.x - 0.70, current_position.y + 0.60);
 				objetivo = toIndex(0.0, 0.0);
 			}
     
@@ -491,9 +490,11 @@ class GoToPath : public BT::StatefulActionNode {
 		double angular_error_sum_ = 0.0;
 		const double KP_linear_ = 0.05;
 		const double KI_linear_ = 0.01;
-		const double KP_angular_ = 0.05;
-		const double KI_angular_ = 0.01;
+		const double KP_angular_ = 0.01;
+		const double KI_angular_ = 0.0003;
 		bool horario = true;
+		std::chrono::steady_clock::time_point begin;
+		std::chrono::steady_clock::time_point end;
 
 		void calculate_error() {
 			position_mutex.lock();
@@ -504,33 +505,36 @@ class GoToPath : public BT::StatefulActionNode {
 				target_angle += 2*M_PI;
 			}
 
-			double current_angle = atan2(2.0*(quaternion_data.y*quaternion_data.x + 
-					quaternion_data.w*quaternion_data.z), 1.0 - 2.0*(pow(quaternion_data.z, 2.0) +
-					pow(quaternion_data.y, 2.0)));
+			double current_angle = atan2(2.0*quaternion_data.w*quaternion_data.z, 1-2*pow(quaternion_data.z, 2.0));
+			position_mutex.unlock();	
 			if (current_angle < 0) {
 				current_angle += 2*M_PI;
 			}
-			if (target_angle < 0.2) {
-				target_angle += 0.1;
+			
+			//Gambiarra para não bugar a odometria
+			target_angle += 0.0873;
+			if (target_angle < 0.4) {
+				target_angle = 0.2;
 			}
-			if (target_angle > 6.18) {
-				target_angle -= 0.1;
+			if (target_angle > 5.8) {
+				target_angle = 0.2;
 			}
-			if (target_angle > 0 && target_angle <= 0.5 && current_angle <= 0.6 && current_angle > 0.5) {
-				this -> angular_error_sum_ = 0.0;
-			}
-			while (target_angle >= 6.28) {
-				target_angle -= 0.2;
-			}
-			if (target_angle >= 6.08 && target_angle < 6.28 && current_angle <= 6.08 && current_angle > 5.88) {
-				this -> angular_error_sum_ = 0.0;
-			}	
 			/*
+			if (target_angle > 0 && target_angle <= 0.5 && current_angle <= 0.5 && current_angle > 0.3) {
+				this -> angular_error_sum_ = this -> angular_error_sum_/10;
+			}
+			if (target_angle >= 5.78 && target_angle < 6.28 && current_angle <= 6.0 && current_angle > 5.8) {
+				this -> angular_error_sum_ = this -> angular_error_sum_/10;
+			}*/
+				
+			//Fim da gambiarra
+			
+			/*	
+			position_mutex.lock();
 			std::cout << "Current angle: " << current_angle << " Target angle: " << target_angle << std::endl;
 			std::cout << "Position: " << current_position.x << " " << current_position.y << std::endl;
-			*/
-			position_mutex.unlock();
-			
+			position_mutex.unlock();*/
+
 			double angular_error = 0.0;
 
 			if (target_angle > current_angle) {
@@ -565,10 +569,11 @@ class GoToPath : public BT::StatefulActionNode {
 
 		BT::NodeStatus onStart() override {
 			std::tuple<double,double> data = pointsToGo.front();
-			this -> targetX = std::get<0>(data);
-			this -> targetY = std::get<1>(data);
-
+			this -> targetX = std::get<0>(data) + 0.70;
+			this -> targetY = std::get<1>(data) - 0.60;
+				
 			std::cout << "Initializing delivery process..." << std::endl;
+			this -> begin = std::chrono::steady_clock::now();
 
 			return BT::NodeStatus::RUNNING;
 		}
@@ -588,7 +593,7 @@ class GoToPath : public BT::StatefulActionNode {
 
 			//std::cout << "\r" << "Estimated time to complete in seconds: " << std::fixed << std::setprecision(3) << time;
 			
-			if (fabs(this -> current_angular_error_) > 0.008 && current_linear_error_ > 0.3) {
+			if (fabs(this -> current_angular_error_) > 0.05) {
 				twist_mutex.lock();
 				velocity.angular.z = this -> calculate_angular_velocity();
 				velocity.linear.x = 0.0;
@@ -596,10 +601,10 @@ class GoToPath : public BT::StatefulActionNode {
 
 			}else if (fabs(this -> current_linear_error_) > 0.1) {
 				twist_mutex.lock();
+				velocity.angular.z = 0.0;
 				velocity.linear.x = this -> calculate_linear_velocity();
 				twist_mutex.unlock();
 
-				this -> angular_error_sum_ = 0.0;
 			}else{
 				twist_mutex.lock();
 				velocity.linear.x = 0.0;
@@ -614,8 +619,8 @@ class GoToPath : public BT::StatefulActionNode {
 				pointsToGo.pop();
 				if (!pointsToGo.empty()) {
 					std::tuple<double,double> next_point = pointsToGo.front();
-					this -> targetX = std::get<0>(next_point);
-					this -> targetY = std::get<1>(next_point);
+					this -> targetX = std::get<0>(next_point) + 0.70;
+					this -> targetY = std::get<1>(next_point) - 0.60;
 					
 					return BT::NodeStatus::RUNNING;
 				}
@@ -626,7 +631,8 @@ class GoToPath : public BT::StatefulActionNode {
 				}
 
 				first_run = false;
-				std::cout << std::endl;
+				end = std::chrono::steady_clock::now();
+				std::cout << std::endl << "Time duration of the mission: " << std::chrono::duration_cast<std::chrono::seconds>(end-begin).count() << "s" << std::endl;
 
 				return BT::NodeStatus::SUCCESS;
 			}
